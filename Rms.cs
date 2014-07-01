@@ -7,11 +7,6 @@ namespace WaveWork
 {
     public class Rms
     {
-        private UInt64 BytesProcessed = 0;
-        private ulong FramePos = 0;
-
-        private WaveHeader2 WavHeader;
-
         [DllImport("Shlwapi.dll", CharSet = CharSet.Unicode)]
         public static extern long StrFormatByteSize(
                 long fileSize
@@ -37,9 +32,10 @@ namespace WaveWork
                 WaveTools.FramesAsMinutesSeconds(RmsStartPos, SampleRate)
                 );
 
-            Console.WriteLine("{0}{1}",
+            Console.WriteLine("{0}{1} ({2})",
                  WaveTools.PrintWithDots("OverallBytes processed"),
-                 BytesProcessed);
+                 BytesProcessed,
+                 GetPrettyByteSize((long)BytesProcessed) );
 
             double millis = new TimeSpan( DateTime.Now.Ticks - Start.Ticks ).TotalMilliseconds;
 
@@ -93,25 +89,28 @@ namespace WaveWork
             return SqrRms;
         }
 
-        public void CalcRms3(BinaryReader br, WaveHeader2 wh, uint FrameWindow)
+        public static void CalcRms3(BinaryReader br, WaveHeader2 wh, uint FrameWindow)
         {
             const   int     BufferSize = 16 * 1024 * 1000;
             byte[] Data;
 
-            this.WavHeader = wh;    // using this to print the stats via the timer
-
             SpiBuffer FrameBufferSqr = new SpiBuffer(FrameWindow);
+
+            UInt64 BytesProcessed = 0;
+            ulong FramePos = 0;
 
             UInt64 BiggestRms_SqrSum = 0;
             UInt64 BiggestRms_SqrSum_StartPos = 0;
 
             System.Timers.Timer timer = new System.Timers.Timer(1000);
-            timer.Elapsed += new System.Timers.ElapsedEventHandler(Progress_Timer_Elapsed);
+            timer.Elapsed += (object sender, System.Timers.ElapsedEventArgs e) => 
+            {
+                PrintProgressLine(BytesProcessed, wh.DataLength, FramePos, wh.SampleRate);
+            };
             timer.Start();
 
             DateTime StartTime = DateTime.Now;
 
-            this.FramePos = 0;
             while ( (Data = br.ReadBytes(BufferSize)).Length != 0  )
             {
                 int pos=0;
@@ -120,7 +119,7 @@ namespace WaveWork
                     ushort BytesRead;
                     UInt64 SqrRms = GetAverageValueSqr(wh.Channels, Data, pos, out BytesRead);
                     pos += BytesRead;
-                    this.BytesProcessed += BytesRead;
+                    BytesProcessed += BytesRead;
 
                     FrameBufferSqr.Add( SqrRms );
 
@@ -136,18 +135,6 @@ namespace WaveWork
                             BiggestRms_SqrSum_StartPos = FramePos - FrameWindow;
                         }
                     }
-
-                    /*
-                    ProgressCounter++;
-                    if (ProgressCounter >= wh.SampleRate * 60) // every "n" minute within the file
-                    {
-                        ProgressCounter = 0;
-                        PrintProgressLine( BytesProcessed, wh.DataLength, FrameCount, wh.SampleRate);
-                    }
-                     * */
-                    //
-                    // move to the next frame
-                    //
                     FramePos++;
                 }
             }
@@ -166,12 +153,6 @@ namespace WaveWork
                 Console.WriteLine("ERROR! The WAV File was no read successfully. Please call Spindi");
             }
         }
-
-        private void Progress_Timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
-        {
-            PrintProgressLine(this.BytesProcessed, WavHeader.DataLength, this.FramePos, WavHeader.SampleRate);
-        }
-
         [Obsolete("CalcRms2 is deprecated. Use CalcRms3 instead.")]
         public void CalcRms2(BinaryReader br, WaveHeader2 wh, uint Step, uint AvgDurationFrames)
         {

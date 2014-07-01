@@ -94,7 +94,7 @@ namespace at.spi.Tools
         }
         public bool GetString(string key, out string value, string DefaultValue)
         {
-            if (!opt.TryGetValue(key, out value))
+            if (!opt.TryGetValue(key.ToLower(), out value))
             {
                 value = DefaultValue;
                 return false;

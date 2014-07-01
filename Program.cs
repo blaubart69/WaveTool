@@ -82,7 +82,7 @@ namespace WaveWork
                     uint RmsWindow;
                     Opts.GetUInt("RmsWindow",out RmsWindow, wh.SampleRate * 10 );  // a 10s window
                     WaveTools.PrintWithDots("RmsWindow", WaveTools.FramesAsSeconds(RmsWindow, wh.SampleRate).ToString("0.000") + "s");
-                    new Rms().CalcRms3(br, wh, RmsWindow);
+                    Rms.CalcRms3(br, wh, RmsWindow);
                 }
                 //Console.WriteLine("{0}{1}", WaveTools.PrintWithDots("Duration"),new TimeSpan(DateTime.Now.Ticks - StartTicks).ToString()); 
                 WaveTools.PrintWithDots("Duration", new TimeSpan(DateTime.Now.Ticks - StartTicks).ToString());
