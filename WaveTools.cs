@@ -6,6 +6,11 @@ using System.Runtime.InteropServices;
 
 namespace WaveWork
 {
+    /*
+     * 2014-07-01 Spindler
+     *  deprecated because I've found out that the WAV header is more "dynamic" as I though in the beginning. :-)
+     * 
+     * 
     public struct WaveHeader
     {
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 4)]
@@ -30,6 +35,7 @@ namespace WaveWork
 
         public UInt32 DataLength;
     }
+    */
     public struct WaveHeader2
     {
         public string RiffHeaderString;
@@ -72,46 +78,57 @@ namespace WaveWork
             wh.BytesPerSecond   = br.ReadUInt32();
             wh.BlockAlign       = br.ReadUInt16();
             wh.BitsPerSample    = br.ReadUInt16();
-
-            if (wh.fmtLength == 18)
+            if (wh.fmtLength == 16)
             {
-                wh.cbSize       = br.ReadUInt16();
+                // everything ok.
+            }
+            else if (wh.fmtLength == 18)
+            {
+                wh.cbSize = br.ReadUInt16();
+                Console.WriteLine("extension size: [{0}]", wh.cbSize);
             }
             if (wh.cbSize > 0)
             {
-                Console.WriteLine("extension size: ", wh.cbSize);
+                Console.WriteLine("skipping extension bytes");
                 br.ReadBytes(wh.cbSize);
             }
 
-            string chunk;
-            UInt32 len;
+            /*
+             * 1. read 4 bytes of "chunk name"
+             * 2. read 4 bytes of "chunk length"
+             * 3. if the chunk is not the "data" chunk => skip the bytes and read the next chunk
+             */
+
+            string ChunkName;
+            UInt32 ChunkLen;
             bool dataChunkFound = false;
             do 
             {
-                chunk = new String( br.ReadChars(4) );
-                Console.WriteLine("chunk read: " + chunk);
-                len = br.ReadUInt32();
-                if (chunk.ToLower().Equals("data"))
+                ChunkName = new String( br.ReadChars(4) );
+                Console.WriteLine("chunk header read [{0}]", ChunkName);
+                ChunkLen = br.ReadUInt32();
+                Console.WriteLine("chunk length [{0}]", ChunkLen);
+                if (ChunkName.ToLower().Equals("data"))
                 {
+                    Console.WriteLine("found [data] chunk. stopping to read further.");
                     dataChunkFound = true;
                 }
                 else
                 {
-                    Console.WriteLine("skipping {0} bytes", len);
-                    br.ReadBytes( (int)len );
+                    Console.WriteLine("skipping {0} bytes", ChunkLen);
+                    br.ReadBytes( (int)ChunkLen );
                 }
             } 
             while ( !dataChunkFound );
 
-            wh.DataHeaderString = chunk;
-            wh.DataLength       = len;
+            wh.DataHeaderString = ChunkName;
+            wh.DataLength       = ChunkLen;
 
             return wh;
         }
-        public static void PrintHeader(WaveHeader2 wh, string Filename)
+        public static void PrintHeader(WaveHeader2 wh)
         {
-            WaveTools.PrintWithDots("File", Filename);
-            Console.WriteLine("----- WAV HEADER -----");
+            Console.WriteLine("----- WAV HEADER (start) -----");
             WaveTools.PrintWithDots("RIFF header",      wh.RiffHeaderString);
             WaveTools.PrintWithDots("Filelength - 8",   wh.FilelengthMinus8.ToString());
             WaveTools.PrintWithDots("Wave header",      wh.WaveHeaderString);
@@ -131,7 +148,7 @@ namespace WaveWork
 
             WaveTools.PrintWithDots("Data header",          wh.DataHeaderString);
             WaveTools.PrintWithDots("Data length",          wh.DataLength.ToString());
-            Console.WriteLine("----- WAV HEADER -----");
+            Console.WriteLine("----- WAV HEADER (end) ------");
         }
         /*
         public static WaveHeader BytesToStruct(byte[] packet)
@@ -150,7 +167,7 @@ namespace WaveWork
         {
             Int16 Sample16Bit = Bytes[1];
             Sample16Bit = (Int16)(Sample16Bit << 8);
-            Sample16Bit = (Int16)(Sample16Bit | Bytes[0]);
+            Sample16Bit = (Int16)(Sample16Bit | (Int16)Bytes[0]);
             return Sample16Bit;
         }
         public static Int16 GetMonoValue(BinaryReader br)
@@ -162,7 +179,7 @@ namespace WaveWork
             }
             return GetSampleValue(value);
         }
-        public static UInt16 CalcRmsValue(BinaryReader br, WaveHeader wh)
+        public static UInt16 CalcRmsValue(BinaryReader br, WaveHeader2 wh)
         {
             UInt64 HelpValue = 0;
 
@@ -215,7 +232,7 @@ namespace WaveWork
 
             return string.Format("{0}m {1}s", m, s);
         }
-        public static uint GetFrameCount(WaveHeader wh)
+        public static uint GetFrameCount(WaveHeader2 wh)
         {
             uint NumberAvgVals = wh.FilelengthMinus8 - 36;
             if (wh.Channels == 2)
@@ -230,7 +247,7 @@ namespace WaveWork
         }
         public static int SizeOf()
         {
-            Type tt = typeof(WaveHeader);
+            Type tt = typeof(WaveHeader2);
             int size;
             if (tt.IsValueType)
             {

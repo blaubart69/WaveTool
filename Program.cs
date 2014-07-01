@@ -17,33 +17,53 @@ namespace WaveWork
             byte b = (byte)(val & 0x00FF);
 
 
-            //Int16 i = (Int16)((UInt16)a << 8) | (UInt16)b;
+            Int16 i = (Int16)( (Int16)(a << 8) | (Int16)b );
 
             //Int16 i6 = ( (Int16)a << (Int16)8 );
 
         }
 
-        static void Main(string[] args)
+        public static void PrintUsage()
         {
-            //testo();
+            Console.WriteLine(
+              "Usage: WaveTool -file {Wavefilename} {-Rms|CountHz} [-RmsWindow {RmsWindowsInFrames}]\n"
+            + "Rms-Params:  -RmsWindow [number]... a number of frames\n"
+            + "Rms example: >>>WaveTool.Exe -rms -file test.wav -RmsWindow 441000<<<\n");
 
-            if (args.Length == 0)
+        }
+
+        private static int ParamCheck(at.spi.Tools.CmdArgs Opts)
+        {
+            string MissingParam;
+            if (!Opts.CheckMustParams(new string[] { "file" }, out MissingParam))
             {
-                Params.PrintUsage();
-                return;
+                PrintUsage();
+                return 4;
             }
 
-            Params.Init(args);
+            if ( !Opts.exists("rms") && !Opts.exists("counthz") )
+            {
+                Console.WriteLine("E: you must specifiy [-rms] or [-CountHz] as an action");
+                PrintUsage();
+                return 8;
+            }
+
+            return 0;
+        }
+
+        static int Main(string[] args)
+        {
+            testo();
+
+            int rc = 8;
+            at.spi.Tools.CmdArgs Opts = new at.spi.Tools.CmdArgs(args);
+            if ((rc = ParamCheck(Opts)) != 0)
+            {
+                return rc;
+            }
 
             Stream fs;
-            if (Params.Filename.Equals("-"))
-            {
-                fs = Console.OpenStandardInput();
-            }
-            else
-            {
-                fs = new FileStream(Params.Filename, FileMode.Open, FileAccess.Read);
-            }
+            fs = new FileStream(Opts.GetString("file"), FileMode.Open, FileAccess.Read);
             BinaryReader br = new BinaryReader(fs);
 
             try
@@ -51,17 +71,18 @@ namespace WaveWork
                 long StartTicks = DateTime.Now.Ticks;
 
                 WaveHeader2 wh = WaveTools.ReadHeader(br);
-                WaveTools.PrintHeader(wh, Params.Filename);
+                WaveTools.PrintHeader(wh);
 
-                if (Params.Action.Equals("counthz"))
+                if (Opts.exists("counthz"))
                 {
                     SinusZaehler.CalcHz(br, wh);
                 }
-                else if (Params.Action.Equals("rms"))
+                else if (Opts.exists("rms"))
                 {
-                    WaveTools.PrintWithDots("Zeitspanne", WaveTools.FramesAsSeconds(Params.FrameWindow, wh.SampleRate).ToString("0.000") + "s");
-
-                    Rms.CalcRms3(br, wh, Params.FrameWindow);
+                    uint RmsWindow;
+                    Opts.GetUInt("RmsWindow",out RmsWindow, wh.SampleRate * 10 );  // a 10s window
+                    WaveTools.PrintWithDots("RmsWindow", WaveTools.FramesAsSeconds(RmsWindow, wh.SampleRate).ToString("0.000") + "s");
+                    new Rms().CalcRms3(br, wh, RmsWindow);
                 }
                 //Console.WriteLine("{0}{1}", WaveTools.PrintWithDots("Duration"),new TimeSpan(DateTime.Now.Ticks - StartTicks).ToString()); 
                 WaveTools.PrintWithDots("Duration", new TimeSpan(DateTime.Now.Ticks - StartTicks).ToString());
@@ -75,6 +96,7 @@ namespace WaveWork
             {
                 fs.Close();
             }
+            return rc;
         }
     }
 }

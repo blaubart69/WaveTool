@@ -5,8 +5,13 @@ using System.Text;
 
 namespace WaveWork
 {
-    class Rms
+    public class Rms
     {
+        private UInt64 BytesProcessed = 0;
+        private ulong FramePos = 0;
+
+        private WaveHeader2 WavHeader;
+
         [DllImport("Shlwapi.dll", CharSet = CharSet.Unicode)]
         public static extern long StrFormatByteSize(
                 long fileSize
@@ -22,9 +27,9 @@ namespace WaveWork
 
         private static void PrintRmsResult(double BiggestRms, ulong RmsStartPos, uint SampleRate, ulong BytesProcessed, DateTime Start)
         {
-            Console.WriteLine("{0}{1}",
-                WaveTools.PrintWithDots("Biggest Rms"),
-                (double)BiggestRms / Int16.MaxValue);
+            Console.WriteLine("----- RESULTS (start) -----");
+
+            Console.WriteLine("{0}{1}", WaveTools.PrintWithDots("Biggest Rms"), BiggestRms);
 
             Console.WriteLine("{0}{1} ({2})",
                 WaveTools.PrintWithDots("Start at"),
@@ -45,6 +50,7 @@ namespace WaveWork
                 WaveTools.PrintWithDots("MB/s"),
                 GetPrettyByteSize( BytesPerSec ) );
 
+            Console.WriteLine("----- RESULTS (end) -------");
         }
 
         private static void PrintProgressLine(ulong BytesProcessed, ulong OverallBytes, ulong FrameCount, uint SampleRate)
@@ -57,7 +63,8 @@ namespace WaveWork
             Console.Write( ((float)BytesProcessed / OverallBytes * 100).ToString("0") );
             Console.Write("%)     \r");
         }
-        private static UInt64 GetAverageValueSqr(ushort Channels, byte[] Data, ref int pos, ref UInt64 BytesProcessed)
+        
+        private static UInt64 GetAverageValueSqr(ushort Channels, byte[] Data, int pos, out ushort BytesProcessed)
         {
             UInt64 SqrRms;
 
@@ -66,78 +73,92 @@ namespace WaveWork
                 UInt64 AvgVal;
                 Int16 SampleValue = BitConverter.ToInt16(Data, pos);
                 AvgVal = (UInt64)Math.Abs(SampleValue);
-                pos += 2;
                 SqrRms = AvgVal * AvgVal;
-                BytesProcessed += 2;
+                BytesProcessed = 2;
             }
             else //if (Channels == 2)
             {
                 UInt64 AvgVal;
-                Int16 LeftChannel = BitConverter.ToInt16(Data, pos);
-                pos += 2;
-                Int16 RightChannel = BitConverter.ToInt16(Data, pos);
-                pos += 2;
+                Int16 LeftChannel  = BitConverter.ToInt16(Data, pos);
+                Int16 RightChannel = BitConverter.ToInt16(Data, pos + 2);
 
                 UInt64 AbsLeft = (UInt64)Math.Abs(LeftChannel);
                 UInt64 AbsRight = (UInt64)Math.Abs(RightChannel);
 
                 AvgVal = AbsLeft * AbsLeft + AbsRight * AbsRight;
                 SqrRms = AvgVal / 2;
-                //AvgVal = (UInt64)Math.Sqrt(AvgVal);
-                BytesProcessed += 4;
+                BytesProcessed = 4;
             }
 
             return SqrRms;
         }
 
-        public static void CalcRms3(BinaryReader br, WaveHeader2 wh, uint AvgDurationFrames)
+        public void CalcRms3(BinaryReader br, WaveHeader2 wh, uint FrameWindow)
         {
             const   int     BufferSize = 16 * 1024 * 1000;
             byte[] Data;
 
-            SpiBuffer FrameBufferSqr = new SpiBuffer(AvgDurationFrames);
-            UInt64 FrameCount = 0;
-            double BiggestRms = 0;
-            UInt64 BiggestRmsStart = 0;
-            UInt32 ProgressCounter = 0;
-            UInt64 BytesProcessed = 0;
+            this.WavHeader = wh;    // using this to print the stats via the timer
+
+            SpiBuffer FrameBufferSqr = new SpiBuffer(FrameWindow);
+
+            UInt64 BiggestRms_SqrSum = 0;
+            UInt64 BiggestRms_SqrSum_StartPos = 0;
+
+            System.Timers.Timer timer = new System.Timers.Timer(1000);
+            timer.Elapsed += new System.Timers.ElapsedEventHandler(Progress_Timer_Elapsed);
+            timer.Start();
 
             DateTime StartTime = DateTime.Now;
 
+            this.FramePos = 0;
             while ( (Data = br.ReadBytes(BufferSize)).Length != 0  )
             {
-                int i=0;
-                while ( i < Data.Length )
+                int pos=0;
+                while ( pos < Data.Length )
                 {
-                    UInt64 SqrRms = GetAverageValueSqr(wh.Channels, Data, ref i, ref BytesProcessed);
+                    ushort BytesRead;
+                    UInt64 SqrRms = GetAverageValueSqr(wh.Channels, Data, pos, out BytesRead);
+                    pos += BytesRead;
+                    this.BytesProcessed += BytesRead;
 
                     FrameBufferSqr.Add( SqrRms );
-                    FrameCount++;
 
                     if (FrameBufferSqr.isFull)
                     {
-                        // Den Durchschnittswert des SqrBuffers errechnen
-                        double rms = Math.Sqrt((double)FrameBufferSqr.Sum / (double)AvgDurationFrames);
-
-                        if (rms > BiggestRms)
+                        // 
+                        // 2014-07-01 Spindler
+                        //  just store the biggest sum here and divide and SQRT afterwards. :-)
+                        //
+                        if (FrameBufferSqr.Sum > BiggestRms_SqrSum)
                         {
-                            BiggestRms = rms;
-                            BiggestRmsStart = FrameCount - AvgDurationFrames;
+                            BiggestRms_SqrSum = FrameBufferSqr.Sum;
+                            BiggestRms_SqrSum_StartPos = FramePos - FrameWindow;
                         }
                     }
 
+                    /*
                     ProgressCounter++;
-                    if (ProgressCounter >= wh.SampleRate * 60) // every minute within the file
+                    if (ProgressCounter >= wh.SampleRate * 60) // every "n" minute within the file
                     {
                         ProgressCounter = 0;
                         PrintProgressLine( BytesProcessed, wh.DataLength, FrameCount, wh.SampleRate);
                     }
+                     * */
+                    //
+                    // move to the next frame
+                    //
+                    FramePos++;
                 }
             }
+            timer.Stop();
+            timer.Close();
 
             if (BytesProcessed == wh.DataLength)
             {
-                PrintRmsResult(BiggestRms, BiggestRmsStart, wh.SampleRate, BytesProcessed, StartTime);
+                double Rms = Math.Sqrt((double)BiggestRms_SqrSum / (double)FrameWindow) / Int16.MaxValue;
+
+                PrintRmsResult(Rms, BiggestRms_SqrSum_StartPos, wh.SampleRate, BytesProcessed, StartTime);
                 Console.WriteLine("SUCCESS! (Bytes processed matches data length. WAV Header was read successfully.)");
             }
             else
@@ -146,7 +167,13 @@ namespace WaveWork
             }
         }
 
-        public static void CalcRms2(BinaryReader br, WaveHeader wh, uint Step, uint AvgDurationFrames)
+        private void Progress_Timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
+        {
+            PrintProgressLine(this.BytesProcessed, WavHeader.DataLength, this.FramePos, WavHeader.SampleRate);
+        }
+
+        [Obsolete("CalcRms2 is deprecated. Use CalcRms3 instead.")]
+        public void CalcRms2(BinaryReader br, WaveHeader2 wh, uint Step, uint AvgDurationFrames)
         {
             //uint NumberAvgValues = AvgDurationFrames / AvgNumberFrames;
 
@@ -194,6 +221,7 @@ namespace WaveWork
                             BiggestRms = rms;
                             BiggestRmsStart = FrameCount - AvgDurationFrames;
                         }
+
                     }
                 }
             }
